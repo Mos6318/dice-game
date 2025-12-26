@@ -1,0 +1,494 @@
+// Game State
+let gameState = {
+  playerCount: 0,
+  players: []
+};
+
+// Row definitions
+const ROWS = [
+  { id: 'ones', label: 'Ones', type: 'number' },
+  { id: 'twos', label: 'Twos', type: 'number' },
+  { id: 'threes', label: 'Threes', type: 'number' },
+  { id: 'fours', label: 'Fours', type: 'number' },
+  { id: 'fives', label: 'Fives', type: 'number' },
+  { id: 'sixes', label: 'Sixes', type: 'number' },
+  { id: 'minimum', label: 'Minimum', type: 'special' },
+  { id: 'maximum', label: 'Maximum', type: 'special' },
+  { id: 'bigStraight15', label: 'Big Straight (1-5)', type: 'figure', bonus: 5 },
+  { id: 'bigStraight26', label: 'Big Straight (2-6)', type: 'figure', bonus: 10 },
+  { id: 'full', label: 'Full', type: 'figure', bonus: 15 },
+  { id: 'karta', label: 'Karta', type: 'figure', bonus: 25 },
+  { id: 'poker', label: 'Poker', type: 'figure', bonus: 50 }
+];
+
+const COLUMNS = ['up', 'down', 'predicted', 'free'];
+
+// Initialize player state
+function createPlayer(name) {
+  const player = {
+    name: name,
+    scores: {}
+  };
+
+  // Initialize all cells
+  COLUMNS.forEach(col => {
+    player.scores[col] = {};
+    ROWS.forEach(row => {
+      player.scores[col][row.id] = {
+        value: null,
+        crossed: false,
+        oneRoll: false,
+        predicted: false
+      };
+    });
+  });
+
+  // Track next available rows for Up/Down columns
+  player.nextUpRow = 0;
+  player.nextDownRow = ROWS.length - 1;
+
+  return player;
+}
+
+// DOM Elements
+const playerCountInput = document.getElementById('playerCount');
+const startGameBtn = document.getElementById('startGameBtn');
+const playersGrid = document.getElementById('playersGrid');
+const playerNamesContainer = document.getElementById('playerNamesContainer');
+
+// Event Listeners
+startGameBtn.addEventListener('click', startNewGame);
+playerCountInput.addEventListener('change', updatePlayerNameInputs);
+playerCountInput.addEventListener('input', updatePlayerNameInputs);
+
+// Load game state from localStorage on page load
+window.addEventListener('DOMContentLoaded', () => {
+  loadGameState();
+  if (gameState.playerCount > 0) {
+    renderPlayers();
+  } else {
+    updatePlayerNameInputs();
+  }
+});
+
+// Update player name input fields based on count
+function updatePlayerNameInputs() {
+  const count = parseInt(playerCountInput.value);
+
+  if (isNaN(count) || count < 1 || count > 6) {
+    playerNamesContainer.innerHTML = '';
+    return;
+  }
+
+  playerNamesContainer.innerHTML = '';
+
+  for (let i = 0; i < count; i++) {
+    const formGroup = document.createElement('div');
+    formGroup.className = 'form-group';
+    formGroup.innerHTML = `
+      <label for="playerName${i}">Player ${i + 1} Name</label>
+      <input 
+        type="text" 
+        id="playerName${i}" 
+        placeholder="Enter name"
+        value="Player ${i + 1}"
+      >
+    `;
+    playerNamesContainer.appendChild(formGroup);
+  }
+}
+
+// Start new game
+function startNewGame() {
+  const count = parseInt(playerCountInput.value);
+
+  if (isNaN(count) || count < 1 || count > 6) {
+    alert('Please enter a number between 1 and 6');
+    return;
+  }
+
+  gameState.playerCount = count;
+  gameState.players = [];
+
+  for (let i = 0; i < count; i++) {
+    const nameInput = document.getElementById(`playerName${i}`);
+    const playerName = nameInput ? nameInput.value.trim() : '';
+    gameState.players.push(createPlayer(playerName || `Player ${i + 1}`));
+  }
+
+  saveGameState();
+  renderPlayers();
+
+  // Hide setup section after starting game
+  const setupSection = document.getElementById(''setupSection'');
+  if (setupSection) {
+    setupSection.style.display = ''none'';
+  }
+}
+
+// Render all players
+function renderPlayers() {
+  playersGrid.innerHTML = '';
+
+  gameState.players.forEach((player, index) => {
+    const playerCard = createPlayerCard(player, index);
+    playersGrid.appendChild(playerCard);
+  });
+}
+
+// Create player card
+          <th>Down ↓</th>
+          <th>Predicted 🎯</th>
+          <th>Free ✨</th>
+        </tr >
+      </thead >
+      <tbody>
+        ${ROWS.map((row, rowIndex) => createRowHTML(player, playerIndex, row, rowIndex)).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td>Total</td>
+          ${COLUMNS.map(col => `<td class="column-total">${calculateColumnTotal(player, col)}</td>`).join('')}
+        </tr>
+      </tfoot>
+    </table >
+  `;
+
+  // Attach event listeners
+  attachEventListeners(card, player, playerIndex);
+
+  return card;
+}
+
+// Create row HTML
+function createRowHTML(player, playerIndex, row, rowIndex) {
+  return `
+  < tr >
+  <td>${row.label}</td>
+      ${ COLUMNS.map(col => createCellHTML(player, playerIndex, row, rowIndex, col)).join('') }
+    </tr >
+  `;
+}
+
+// Create cell HTML
+function createCellHTML(player, playerIndex, row, rowIndex, column) {
+  const cell = player.scores[column][row.id];
+  const isDisabled = isCellDisabled(player, row, rowIndex, column);
+  const cellId = `cell - ${ playerIndex } -${ column } -${ row.id } `;
+
+  let cellClass = 'score-input';
+  if (cell.crossed) cellClass += ' crossed';
+  else if (cell.value !== null) cellClass += ' filled';
+  if (cell.predicted) cellClass += ' predicted';
+  if (cell.oneRoll) cellClass += ' one-roll';
+
+  const displayValue = cell.crossed ? 'X' : (cell.value !== null ? cell.value : '');
+
+  let cellHTML = `
+  < td class="score-cell" >
+    <input
+      type="text"
+      class="${cellClass}"
+      id="${cellId}"
+      value="${displayValue}"
+      ${isDisabled ? 'disabled' : ''}
+      data-player="${playerIndex}"
+      data-column="${column}"
+      data-row="${row.id}"
+      data-row-index="${rowIndex}"
+      placeholder="-"
+    >
+      `;
+
+      // Add "One Roll" checkbox for figure rows
+      if (row.type === 'figure' && !isDisabled) {
+    const checkboxId = `oneroll-${playerIndex}-${column}-${row.id}`;
+      cellHTML += `
+      <div class="checkbox-container">
+        <input
+          type="checkbox"
+          id="${checkboxId}"
+          ${cell.oneRoll ? 'checked' : ''}
+          data-player="${playerIndex}"
+          data-column="${column}"
+          data-row="${row.id}"
+        >
+          <label for="${checkboxId}">1 roll</label>
+      </div>
+      `;
+  }
+
+      cellHTML += `</td>`;
+  return cellHTML;
+}
+
+// Check if cell should be disabled
+function isCellDisabled(player, row, rowIndex, column) {
+  const cell = player.scores[column][row.id];
+
+  // Crossed cells can be edited (user can change X to a number or vice versa)
+
+  // For Up/Down columns with filled cells, allow editing
+  if (column === 'up') {
+    if (cell.value !== null) {
+      return false; // Allow editing filled cells
+    }
+    return rowIndex !== player.nextUpRow;
+  }
+
+  if (column === 'down') {
+    if (cell.value !== null) {
+      return false; // Allow editing filled cells
+    }
+    return rowIndex !== player.nextDownRow;
+  }
+
+  // Predicted and Free columns: always allow editing (except crossed)
+  return false;
+}
+
+// Attach event listeners to inputs
+function attachEventListeners(card, player, playerIndex) {
+  // Score inputs
+  const inputs = card.querySelectorAll('.score-input');
+  inputs.forEach(input => {
+    input.addEventListener('change', handleScoreInput);
+    input.addEventListener('contextmenu', handleRightClick);
+
+    // Auto-predict when focusing on Predicted column
+    input.addEventListener('focus', handleFocus);
+  });
+
+  // One roll checkboxes
+  const checkboxes = card.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', handleOneRollToggle);
+  });
+}
+
+// Handle focus - auto-predict for Predicted column
+function handleFocus(e) {
+  const column = e.target.dataset.column;
+
+  if (column === 'predicted') {
+    const playerIndex = parseInt(e.target.dataset.player);
+    const rowId = e.target.dataset.row;
+    const player = gameState.players[playerIndex];
+    const cell = player.scores[column][rowId];
+
+    // Auto-predict when focusing on an empty cell
+    if (!cell.predicted && cell.value === null && !cell.crossed) {
+      cell.predicted = true;
+      saveGameState();
+      renderPlayers();
+      // Re-focus the input after re-render
+      setTimeout(() => {
+        const input = document.getElementById(`cell - ${ playerIndex } -${ column } -${ rowId } `);
+        if (input) input.focus();
+      }, 50);
+    }
+  }
+}
+
+// Handle score input
+function handleScoreInput(e) {
+  const playerIndex = parseInt(e.target.dataset.player);
+  const column = e.target.dataset.column;
+  const rowId = e.target.dataset.row;
+  const value = e.target.value.trim();
+
+  const player = gameState.players[playerIndex];
+  const cell = player.scores[column][rowId];
+
+
+  // Check if user typed 'X' or 'x' to cross out the cell
+  if (value.toLowerCase() === 'x') {
+    cell.crossed = true;
+    cell.value = 0;
+
+    // Update next available row for Up/Down columns
+    if (column === 'up') {
+      player.nextUpRow++;
+    } else if (column === 'down') {
+      player.nextDownRow--;
+    }
+
+    saveGameState();
+    renderPlayers();
+    return;
+  }
+
+  // Parse value
+  if (value === '' || value === '-') {
+    cell.value = null;
+    cell.crossed = false;
+  } else {
+    const numValue = parseInt(value);
+    if (isNaN(numValue)) {
+      alert('Please enter a valid number or "X" to cross out');
+      e.target.value = cell.value !== null ? cell.value : '';
+      return;
+    }
+    cell.value = numValue;
+
+    // Update next available row for Up/Down columns
+    if (column === 'up') {
+      player.nextUpRow++;
+    } else if (column === 'down') {
+      player.nextDownRow--;
+    }
+  }
+
+  saveGameState();
+  renderPlayers();
+  
+  // Hide setup section after starting game
+  const setupSection = document.getElementById(''setupSection'');
+  if (setupSection) {
+    setupSection.style.display = ''none'';
+  }
+}
+
+// Handle right-click to cross out a cell
+function handleRightClick(e) {
+  e.preventDefault();
+
+  const playerIndex = parseInt(e.target.dataset.player);
+  const column = e.target.dataset.column;
+  const rowId = e.target.dataset.row;
+  const rowIndex = parseInt(e.target.dataset.rowIndex);
+
+  const player = gameState.players[playerIndex];
+  const cell = player.scores[column][rowId];
+
+  // Don't allow crossing if already filled
+  if (cell.value !== null) {
+    return;
+  }
+
+  // Check if cell can be crossed based on column rules
+  if (column === 'up' && rowIndex !== player.nextUpRow) {
+    alert('You can only cross the next available row in the Up column');
+    return;
+  }
+
+  if (column === 'down' && rowIndex !== player.nextDownRow) {
+    alert('You can only cross the next available row in the Down column');
+    return;
+  }
+
+  if (column === 'predicted' && !cell.predicted) {
+    // Auto-predict before crossing
+    cell.predicted = true;
+  }
+
+  if (confirm(`Cross out ${ ROWS.find(r => r.id === rowId).label } in ${ column } column ? `)) {
+    cell.crossed = true;
+    cell.value = 0;
+
+    // Update next available row for Up/Down columns
+    if (column === 'up') {
+      player.nextUpRow++;
+    } else if (column === 'down') {
+      player.nextDownRow--;
+    }
+
+    saveGameState();
+    renderPlayers();
+  }
+}
+
+// Handle one roll checkbox toggle
+function handleOneRollToggle(e) {
+  const playerIndex = parseInt(e.target.dataset.player);
+  const column = e.target.dataset.column;
+  const rowId = e.target.dataset.row;
+
+  const player = gameState.players[playerIndex];
+  const cell = player.scores[column][rowId];
+
+  cell.oneRoll = e.target.checked;
+
+  saveGameState();
+  renderPlayers();
+  
+  // Hide setup section after starting game
+  const setupSection = document.getElementById(''setupSection'');
+  if (setupSection) {
+    setupSection.style.display = ''none'';
+  }
+}
+
+// Calculate column total
+function calculateColumnTotal(player, column) {
+  let total = 0;
+  let onesCount = 0;
+  let minimum = null;
+  let maximum = null;
+
+  ROWS.forEach(row => {
+    const cell = player.scores[column][row.id];
+
+    if (cell.value !== null) {
+      let score = cell.value;
+
+      // For figure rows, apply bonus and one-roll multiplier
+      if (row.type === 'figure') {
+        if (cell.oneRoll) {
+          score = score * 2;
+        }
+        score = score + row.bonus;
+      }
+
+      total += score;
+
+      // Track minimum and maximum for modifier calculation
+      if (row.id === 'minimum') {
+        minimum = cell.value;
+      }
+      if (row.id === 'maximum') {
+        maximum = cell.value;
+      }
+
+      // Count ones in this column
+      if (row.id === 'ones' && cell.value !== null) {
+        onesCount = cell.value;
+      }
+    }
+  });
+
+  // Apply minimum/maximum modifier
+  if (minimum !== null && maximum !== null) {
+    const modifier = (maximum - minimum) * onesCount;
+    total += modifier;
+  }
+
+  return total;
+}
+
+// Calculate player total
+function calculatePlayerTotal(player) {
+  let total = 0;
+  COLUMNS.forEach(col => {
+    total += calculateColumnTotal(player, col);
+  });
+  return total;
+}
+
+// Save game state to localStorage
+function saveGameState() {
+  localStorage.setItem('diceGameState', JSON.stringify(gameState));
+}
+
+// Load game state from localStorage
+function loadGameState() {
+  const saved = localStorage.getItem('diceGameState');
+  if (saved) {
+    try {
+      gameState = JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to load game state:', e);
+      gameState = { playerCount: 0, players: [] };
+    }
+  }
+}
